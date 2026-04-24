@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import type { ConversationWithPeer, Profile } from "@/lib/types";
-import { Sidebar } from "./Sidebar";
-import { ChatWindow } from "./ChatWindow";
-import { EmptyChatPanel } from "./EmptyChatPanel";
+import { Sidebar } from "@/components/chat/Sidebar";
+import { ChatWindow } from "@/components/chat/ChatWindow";
+import { EmptyChatPanel } from "@/components/chat/EmptyChatPanel";
 
 export function ChatApp() {
   const { user } = useAuth();

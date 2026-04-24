@@ -4,8 +4,8 @@ import type { ConversationWithPeer, Message, Profile } from "@/lib/types";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Loader2 } from "lucide-react";
-import { MessageList } from "./MessageList";
-import { Composer } from "./Composer";
+import { MessageList } from "@/components/chat/MessageList";
+import { Composer } from "@/components/chat/Composer";
 import { formatDistanceToNowStrict } from "date-fns";
 
 type Props = {
