@@ -8,8 +8,8 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/lib/auth";
-import { ProfileDialog } from "./ProfileDialog";
-import { NewChatDialog } from "./NewChatDialog";
+import { ProfileDialog } from "@/components/chat/ProfileDialog";
+import { NewChatDialog } from "@/components/chat/NewChatDialog";
 import { useInstallPrompt } from "@/lib/use-install-prompt";
 import { formatDistanceToNowStrict } from "date-fns";
 
