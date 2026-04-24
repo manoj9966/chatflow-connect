@@ -140,6 +140,15 @@ export function ChatWindow({ me, conversation, isPeerOnline, onBack }: Props) {
         )}
       </div>
 
+      {peerTyping && (
+        <div className="border-t border-border bg-card/60 px-4 py-1.5 text-xs text-muted-foreground flex items-center gap-2">
+          <span className="typing-dot" />
+          <span className="typing-dot" />
+          <span className="typing-dot" />
+          <span className="ml-1">{peer?.display_name?.split(" ")[0] ?? "Someone"} is typing…</span>
+        </div>
+      )}
+
       {/* Composer */}
       <Composer conversationId={conversation.id} myId={me.id} onTyping={broadcastTyping} />
     </div>
