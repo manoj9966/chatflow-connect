@@ -1,0 +1,14 @@
+{
+  "name": "Texto — Fast, private messaging",
+  "short_name": "Texto",
+  "description": "Fast, private real-time messaging.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3faf6",
+  "theme_color": "#10b981",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
