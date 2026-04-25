@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useServerFn } from "@tanstack/react-start";
+import { requestPhoneOtp, verifyPhoneOtp, rotatePhonePassword } from "@/lib/phone-auth.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -175,38 +177,63 @@ function PhoneAuth() {
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
+  const requestOtp = useServerFn(requestPhoneOtp);
+  const verifyOtp = useServerFn(verifyPhoneOtp);
+  const rotatePw = useServerFn(rotatePhonePassword);
 
   const sendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     const parsed = phoneSchema.safeParse(phone);
     if (!parsed.success) return toast.error(parsed.error.issues[0]?.message ?? "Invalid phone");
     setLoading(true);
-    const { error } = await supabase.auth.signInWithOtp({ phone: parsed.data });
-    setLoading(false);
-    if (error) {
-      if (error.message.toLowerCase().includes("phone") || error.message.toLowerCase().includes("provider")) {
-        toast.error("SMS login isn't configured yet. Ask the admin to enable phone auth in backend settings.");
-      } else {
-        toast.error(error.message);
-      }
-      return;
+    try {
+      await requestOtp({ data: { phone: parsed.data } });
+      toast.success("Code sent! Check your messages.");
+      setStep("otp");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Could not send code.";
+      toast.error(msg);
+    } finally {
+      setLoading(false);
     }
-    toast.success("Code sent! Check your messages.");
-    setStep("otp");
   };
 
-  const verifyOtp = async (e: React.FormEvent) => {
+  const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     if (otp.length !== 6) return toast.error("Enter the 6-digit code");
     setLoading(true);
-    const { error } = await supabase.auth.verifyOtp({
-      phone,
-      token: otp,
-      type: "sms",
-    });
-    setLoading(false);
-    if (error) toast.error(error.message);
-    else toast.success("Welcome!");
+    try {
+      const result = await verifyOtp({ data: { phone, code: otp } });
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        phone: result.phone,
+        password: result.password,
+      });
+      // Immediately invalidate the one-time password regardless of sign-in outcome.
+      void rotatePw({ data: { phone: result.phone } }).catch(() => {});
+      if (signInError) {
+        toast.error(signInError.message);
+        return;
+      }
+      toast.success(result.isNewUser ? "Welcome!" : "Welcome back!");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Verification failed.";
+      toast.error(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resend = async () => {
+    setLoading(true);
+    try {
+      await requestOtp({ data: { phone } });
+      toast.success("New code sent");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Could not resend code.";
+      toast.error(msg);
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (step === "phone") {
@@ -236,7 +263,7 @@ function PhoneAuth() {
   }
 
   return (
-    <form onSubmit={verifyOtp} className="mt-4 space-y-4">
+    <form onSubmit={handleVerify} className="mt-4 space-y-4">
       <button
         type="button"
         onClick={() => { setStep("phone"); setOtp(""); }}
@@ -268,13 +295,7 @@ function PhoneAuth() {
         variant="ghost"
         className="w-full"
         disabled={loading}
-        onClick={async () => {
-          setLoading(true);
-          const { error } = await supabase.auth.signInWithOtp({ phone });
-          setLoading(false);
-          if (error) toast.error(error.message);
-          else toast.success("New code sent");
-        }}
+        onClick={resend}
       >
         Resend code
       </Button>
