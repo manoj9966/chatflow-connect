@@ -26,9 +26,15 @@ async function hashCode(code: string, salt: string) {
 }
 
 function generateCode() {
-  // 6-digit numeric code, zero-padded
   const n = (crypto.getRandomValues(new Uint32Array(1))[0] ?? 0) % 1000000;
   return n.toString().padStart(6, "0");
+}
+
+function generateRandomPassword() {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 async function sendTwilioSms(to: string, body: string) {
@@ -36,7 +42,7 @@ async function sendTwilioSms(to: string, body: string) {
   const token = process.env.TWILIO_AUTH_TOKEN;
   const from = process.env.TWILIO_PHONE_NUMBER;
   if (!sid || !token || !from) {
-    throw new Error("Twilio is not configured");
+    throw new Error("SMS service is not configured.");
   }
   const auth = btoa(`${sid}:${token}`);
   const res = await fetch(
@@ -63,7 +69,6 @@ export const requestPhoneOtp = createServerFn({ method: "POST" })
     const phone = data.phone;
     const now = new Date();
 
-    // Throttle: count sends in last hour
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
     const { count: recentCount, error: countError } = await supabaseAdmin
       .from("phone_otp_codes")
@@ -75,10 +80,9 @@ export const requestPhoneOtp = createServerFn({ method: "POST" })
       throw new Error("Could not send code. Please try again.");
     }
     if ((recentCount ?? 0) >= MAX_RESENDS_PER_HOUR) {
-      throw new Error("Too many codes requested. Try again later.");
+      throw new Error("Too many codes requested. Try again in an hour.");
     }
 
-    // Cooldown: latest send must be older than RESEND_COOLDOWN_SECONDS
     const { data: latest } = await supabaseAdmin
       .from("phone_otp_codes")
       .select("last_sent_at")
@@ -94,7 +98,6 @@ export const requestPhoneOtp = createServerFn({ method: "POST" })
       }
     }
 
-    // Invalidate any existing unconsumed codes for this phone
     await supabaseAdmin
       .from("phone_otp_codes")
       .update({ consumed_at: now.toISOString() })
@@ -166,30 +169,29 @@ export const verifyPhoneOtp = createServerFn({ method: "POST" })
       throw new Error("Incorrect code. Please try again.");
     }
 
-    // Mark consumed
     await supabaseAdmin
       .from("phone_otp_codes")
       .update({ consumed_at: now.toISOString() })
       .eq("id", row.id);
 
-    // Find or create the auth user for this phone
+    // Find or create the auth user for this phone.
     type AuthUser = { id: string; phone?: string | null };
-    let userId: string | undefined;
-
-    // Look up by phone using admin listUsers (paginated; first match)
-    const list = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 200 });
+    const list = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (list.error) {
       console.error("listUsers failed", list.error);
       throw new Error("Sign-in failed. Please try again.");
     }
     const normalized = phone.replace(/^\+/, "");
-    const match = (list.data.users as AuthUser[]).find((u) => {
-      const p = (u.phone ?? "").replace(/^\+/, "");
-      return p === normalized;
-    });
+    const match = (list.data.users as AuthUser[]).find(
+      (u) => (u.phone ?? "").replace(/^\+/, "") === normalized,
+    );
+
+    let userId: string;
+    let isNewUser = false;
     if (match) {
       userId = match.id;
     } else {
+      isNewUser = true;
       const created = await supabaseAdmin.auth.admin.createUser({
         phone,
         phone_confirm: true,
@@ -202,46 +204,40 @@ export const verifyPhoneOtp = createServerFn({ method: "POST" })
       userId = created.data.user.id;
     }
 
-    // Issue a session via magiclink (returns hashed_token we exchange on the client)
-    const linkRes = await supabaseAdmin.auth.admin.generateLink({
-      type: "magiclink",
-      // generateLink for magiclink requires email; for phone, use the user id flow
-      // Workaround: use type 'magiclink' with email lookup is not possible here.
-      // Instead create a one-time token via signInWithOtp on phone is not server-side.
-      // We use 'recovery'-style: generate a passwordless email link is unavailable for phone-only users.
-      email: `${userId}@phone.local`,
-    } as never);
-    // The above call is a placeholder that will fail for phone-only users; caught below.
-    if (linkRes.error || !linkRes.data) {
-      // Fallback: return userId; client will not be signed in.
-      console.error("generateLink failed (expected for phone-only)", linkRes.error);
-    }
-
-    // Final approach: mint a session by setting a temporary password and returning credentials
-    // is insecure. Instead, return a short-lived custom token via admin.generateLink for email
-    // is not viable. So we use admin.updateUser to set an email + password is destructive.
-    //
-    // Working approach: use admin.generateLink with type 'magiclink' AFTER ensuring the user has
-    // an email. For phone-only users, we synthesize a placeholder email tied to the user id.
-    const placeholderEmail = `${userId}@phone.users.local`;
-    await supabaseAdmin.auth.admin.updateUserById(userId!, {
-      email: placeholderEmail,
-      email_confirm: true,
+    // Mint a one-time password the client will use to sign in immediately.
+    const oneTimePassword = generateRandomPassword();
+    const upd = await supabaseAdmin.auth.admin.updateUserById(userId, {
+      password: oneTimePassword,
     });
-
-    const link = await supabaseAdmin.auth.admin.generateLink({
-      type: "magiclink",
-      email: placeholderEmail,
-    });
-    if (link.error || !link.data?.properties?.hashed_token) {
-      console.error("magiclink generate failed", link.error);
-      throw new Error("Could not sign you in. Please try again.");
+    if (upd.error) {
+      console.error("updateUserById password set failed", upd.error);
+      throw new Error("Could not finalize sign-in. Please try again.");
     }
 
     return {
       ok: true,
-      userId,
-      tokenHash: link.data.properties.hashed_token,
-      verificationType: "magiclink" as const,
+      phone,
+      password: oneTimePassword,
+      isNewUser,
     };
+  });
+
+export const rotatePhonePassword = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => phoneSchema.parse(input))
+  .handler(async ({ data }) => {
+    type AuthUser = { id: string; phone?: string | null };
+    const list = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    if (list.error) {
+      console.error("listUsers failed", list.error);
+      return { ok: false };
+    }
+    const normalized = data.phone.replace(/^\+/, "");
+    const match = (list.data.users as AuthUser[]).find(
+      (u) => (u.phone ?? "").replace(/^\+/, "") === normalized,
+    );
+    if (!match) return { ok: false };
+    await supabaseAdmin.auth.admin.updateUserById(match.id, {
+      password: generateRandomPassword(),
+    });
+    return { ok: true };
   });
